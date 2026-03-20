@@ -17,7 +17,10 @@ export default defineSchema({
     dateTime: v.string(),
     deadline: v.string(),
     priority: v.string(),
+    category: v.optional(v.string()), // NEW: task category/tag
     isCompleted: v.boolean(),
     userId: v.string(), // references users._id as string
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_category", ["userId", "category"]), // index for category filtering
 });

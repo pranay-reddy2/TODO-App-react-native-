@@ -6,6 +6,8 @@
  * - Fixed delete: awaits mutation and shows correct error
  * - Edit mode includes DatePickerModal for deadline
  * - Filter tabs: All / Active / Done
+ * - Category filter: filter tasks by category tag
+ * - Category badge shown on each task card
  */
 import { createHomeStyles } from "@/assets/styles/home.styles";
 import EmptyState from "@/components/EmptyState";
@@ -13,6 +15,10 @@ import Header from "@/components/Header";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import TodoInput from "@/components/TodoInput";
 import DatePickerModal from "@/components/DatePickerModel";
+import CategoryPicker, {
+  getCategoryColor,
+  getCategoryIcon,
+} from "@/components/CategoryPicker";
 import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import useTheme from "@/hooks/useTheme";
@@ -29,6 +35,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  ScrollView,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -53,20 +60,34 @@ export default function Index() {
   const { user } = useAuth();
 
   // Support both old sessions (userId=email) and new sessions (userId=id)
-  // If user.id exists use it, otherwise fall back to email for legacy data
   const userId = user?.id ?? user?.email ?? undefined;
 
-  // Use "skip" when no user so query doesn't fire while loading
+  // Status filter state
+  const [filter, setFilter] = useState<"all" | "active" | "completed">("all");
+
+  // Category filter state
+  const [activeCategory, setActiveCategory] = useState<string>("all");
+
+  // Fetch todos with optional category filter applied server-side
   const todos = useQuery(
     api.todos.getTodos,
+    userId
+      ? {
+          userId,
+          category: activeCategory !== "all" ? activeCategory : undefined,
+        }
+      : "skip"
+  );
+
+  // Fetch all unique categories for this user
+  const userCategories = useQuery(
+    api.todos.getUserCategories,
     userId ? { userId } : "skip"
   );
+
   const toggleTodo = useMutation(api.todos.toggleTodo);
   const deleteTodo = useMutation(api.todos.deleteTodo);
   const updateTodo = useMutation(api.todos.updateTodo);
-
-  // Filter state
-  const [filter, setFilter] = useState<"all" | "active" | "completed">("all");
 
   // Edit states
   const [editingId, setEditingId] = useState<Id<"todos"> | null>(null);
@@ -74,10 +95,18 @@ export default function Index() {
   const [editDescription, setEditDescription] = useState("");
   const [editDeadline, setEditDeadline] = useState("");
   const [editPriority, setEditPriority] = useState("medium");
+  const [editCategory, setEditCategory] = useState("General");
+  const [showEditCategory, setShowEditCategory] = useState(false);
+
+  // All todos (unfiltered) for tab badge counts — must be called before any early return
+  const allTodos = useQuery(
+    api.todos.getTodos,
+    userId ? { userId } : "skip"
+  ) ?? [];
 
   if (!todos) return <LoadingSpinner />;
 
-  // Filtered view
+  // Apply status filter on client side (category filter is server-side)
   const filteredTodos = todos.filter((t) => {
     if (filter === "active") return !t.isCompleted;
     if (filter === "completed") return t.isCompleted;
@@ -120,6 +149,8 @@ export default function Index() {
     setEditDescription(todo.description);
     setEditDeadline(todo.deadline);
     setEditPriority(todo.priority);
+    setEditCategory(todo.category ?? "General");
+    setShowEditCategory(false);
   };
 
   // SAVE EDIT
@@ -136,6 +167,8 @@ export default function Index() {
         description: editDescription,
         deadline: editDeadline,
         priority: editPriority,
+        category: editCategory,
+        dateTime: new Date().toISOString(),
       });
       setEditingId(null);
     } catch (error: unknown) {
@@ -144,7 +177,10 @@ export default function Index() {
     }
   };
 
-  const handleCancelEdit = () => setEditingId(null);
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setShowEditCategory(false);
+  };
 
   // Format deadline for display
   const formatDeadline = (deadline: string) => {
@@ -171,6 +207,8 @@ export default function Index() {
     const deadlineInfo = formatDeadline(item.deadline);
     const priorityColor = PRIORITY_COLORS[item.priority] ?? colors.textMuted;
     const priorityIcon = PRIORITY_ICONS[item.priority] ?? "alert-circle";
+    const catColor = getCategoryColor(item.category ?? "General");
+    const catIcon = getCategoryIcon(item.category ?? "General");
 
     return (
       <View style={styles.todoItemWrapper}>
@@ -242,6 +280,50 @@ export default function Index() {
                 ))}
               </View>
 
+              {/* Category selector in edit mode */}
+              <TouchableOpacity
+                onPress={() => setShowEditCategory((v) => !v)}
+                style={{ marginBottom: 10 }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: catColor,
+                    backgroundColor: catColor + "15",
+                    alignSelf: "flex-start",
+                  }}
+                >
+                  <Ionicons name={catIcon} size={13} color={catColor} />
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: catColor }}>
+                    {editCategory}
+                  </Text>
+                  <Ionicons
+                    name={showEditCategory ? "chevron-up" : "chevron-down"}
+                    size={12}
+                    color={catColor}
+                  />
+                </View>
+              </TouchableOpacity>
+
+              {showEditCategory && (
+                <View style={{ marginBottom: 12 }}>
+                  <CategoryPicker
+                    value={editCategory}
+                    onSelect={(cat) => {
+                      setEditCategory(cat);
+                      setShowEditCategory(false);
+                    }}
+                    extraCategories={userCategories ?? []}
+                  />
+                </View>
+              )}
+
               <View style={styles.editButtons}>
                 <TouchableOpacity onPress={handleSaveEdit}>
                   <LinearGradient colors={colors.gradients.success} style={styles.editButton}>
@@ -284,8 +366,26 @@ export default function Index() {
                 </Text>
               ) : null}
 
-              {/* Meta row: priority + deadline */}
-              <View style={{ flexDirection: "row", gap: 8, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+              {/* Meta row: category + priority + deadline */}
+              <View style={{ flexDirection: "row", gap: 6, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+                {/* Category badge */}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    backgroundColor: catColor + "18",
+                    paddingHorizontal: 7,
+                    paddingVertical: 3,
+                    borderRadius: 8,
+                    gap: 3,
+                  }}
+                >
+                  <Ionicons name={catIcon} size={10} color={catColor} />
+                  <Text style={{ color: catColor, fontSize: 10, fontWeight: "700" }}>
+                    {item.category ?? "General"}
+                  </Text>
+                </View>
+
                 {/* Priority badge */}
                 <View style={{
                   flexDirection: "row",
@@ -333,7 +433,7 @@ export default function Index() {
     );
   };
 
-  // Filter tabs
+  // Status filter tabs
   const filterTabs: { key: "all" | "active" | "completed"; label: string }[] = [
     { key: "all", label: "All" },
     { key: "active", label: "Active" },
@@ -348,16 +448,16 @@ export default function Index() {
         <Header />
         <TodoInput />
 
-        {/* Filter tabs */}
-        <View style={{ flexDirection: "row", paddingHorizontal: 24, gap: 8, marginBottom: 8 }}>
+        {/* Status filter tabs */}
+        <View style={{ flexDirection: "row", paddingHorizontal: 24, gap: 8, marginBottom: 6 }}>
           {filterTabs.map((tab) => {
             const isActive = filter === tab.key;
             const count =
               tab.key === "all"
-                ? todos.length
+                ? allTodos.length
                 : tab.key === "active"
-                ? todos.filter((t) => !t.isCompleted).length
-                : todos.filter((t) => t.isCompleted).length;
+                ? allTodos.filter((t) => !t.isCompleted).length
+                : allTodos.filter((t) => t.isCompleted).length;
             return (
               <TouchableOpacity
                 key={tab.key}
@@ -384,6 +484,99 @@ export default function Index() {
             );
           })}
         </View>
+
+        {/* Category filter row */}
+        {userCategories && userCategories.length > 0 && (
+          <View style={{ paddingHorizontal: 24, marginBottom: 8 }}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+            >
+              {/* "All categories" chip */}
+              <TouchableOpacity
+                onPress={() => setActiveCategory("all")}
+                activeOpacity={0.7}
+              >
+                <View
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 5,
+                    borderRadius: 20,
+                    backgroundColor:
+                      activeCategory === "all"
+                        ? colors.primary + "22"
+                        : colors.border + "44",
+                    borderWidth: 1,
+                    borderColor:
+                      activeCategory === "all" ? colors.primary : colors.border,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <Ionicons
+                    name="apps-outline"
+                    size={11}
+                    color={activeCategory === "all" ? colors.primary : colors.textMuted}
+                  />
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "700",
+                      color: activeCategory === "all" ? colors.primary : colors.textMuted,
+                    }}
+                  >
+                    All
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Per-category chips */}
+              {userCategories.map((cat) => {
+                const catColor = getCategoryColor(cat);
+                const catIcon = getCategoryIcon(cat);
+                const isActive = activeCategory === cat;
+                return (
+                  <TouchableOpacity
+                    key={cat}
+                    onPress={() => setActiveCategory(isActive ? "all" : cat)}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={{
+                        paddingHorizontal: 10,
+                        paddingVertical: 5,
+                        borderRadius: 20,
+                        backgroundColor: isActive ? catColor + "22" : colors.border + "44",
+                        borderWidth: 1,
+                        borderColor: isActive ? catColor : colors.border,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 4,
+                      }}
+                    >
+                      <Ionicons
+                        name={catIcon}
+                        size={11}
+                        color={isActive ? catColor : colors.textMuted}
+                      />
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: "700",
+                          color: isActive ? catColor : colors.textMuted,
+                        }}
+                      >
+                        {cat}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
 
         <FlatList
           data={filteredTodos}
