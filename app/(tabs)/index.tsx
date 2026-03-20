@@ -1,8 +1,18 @@
+/**
+ * app/(tabs)/index.tsx
+ *
+ * Main todo list screen.
+ * - Uses Convex user ID (not email) as userId for proper DB linking
+ * - Fixed delete: awaits mutation and shows correct error
+ * - Edit mode includes DatePickerModal for deadline
+ * - Filter tabs: All / Active / Done
+ */
 import { createHomeStyles } from "@/assets/styles/home.styles";
 import EmptyState from "@/components/EmptyState";
 import Header from "@/components/Header";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import TodoInput from "@/components/TodoInput";
+import DatePickerModal from "@/components/DatePickerModel";
 import { api } from "@/convex/_generated/api";
 import { Doc, Id } from "@/convex/_generated/dataModel";
 import useTheme from "@/hooks/useTheme";
@@ -42,13 +52,20 @@ export default function Index() {
   const styles = createHomeStyles(colors);
   const { user } = useAuth();
 
-  // Pass userId so each user only sees their own todos
-  const todos = useQuery(api.todos.getTodos, { userId: user?.email ?? "guest" });
+  // Support both old sessions (userId=email) and new sessions (userId=id)
+  // If user.id exists use it, otherwise fall back to email for legacy data
+  const userId = user?.id ?? user?.email ?? undefined;
+
+  // Use "skip" when no user so query doesn't fire while loading
+  const todos = useQuery(
+    api.todos.getTodos,
+    userId ? { userId } : "skip"
+  );
   const toggleTodo = useMutation(api.todos.toggleTodo);
   const deleteTodo = useMutation(api.todos.deleteTodo);
   const updateTodo = useMutation(api.todos.updateTodo);
 
-  // Filter state: "all" | "active" | "completed"
+  // Filter state
   const [filter, setFilter] = useState<"all" | "active" | "completed">("all");
 
   // Edit states
@@ -71,12 +88,13 @@ export default function Index() {
   const handleToggleTodo = async (id: Id<"todos">) => {
     try {
       await toggleTodo({ id });
-    } catch {
-      Alert.alert("Error", "Failed to update task");
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Failed to update task";
+      Alert.alert("Error", msg);
     }
   };
 
-  // DELETE
+  // DELETE — properly awaits and shows errors
   const handleDeleteTodo = (id: Id<"todos">) => {
     Alert.alert("Delete Task", "Are you sure you want to delete this task?", [
       { text: "Cancel", style: "cancel" },
@@ -86,8 +104,9 @@ export default function Index() {
         onPress: async () => {
           try {
             await deleteTodo({ id });
-          } catch {
-            Alert.alert("Error", "Failed to delete task");
+          } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message : "Failed to delete task";
+            Alert.alert("Error", msg);
           }
         },
       },
@@ -119,8 +138,9 @@ export default function Index() {
         priority: editPriority,
       });
       setEditingId(null);
-    } catch {
-      Alert.alert("Error", "Failed to update task");
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Failed to update task";
+      Alert.alert("Error", msg);
     }
   };
 
@@ -130,8 +150,9 @@ export default function Index() {
   const formatDeadline = (deadline: string) => {
     if (!deadline) return null;
     try {
-      const date = new Date(deadline);
+      const date = new Date(deadline + "T00:00:00");
       const now = new Date();
+      now.setHours(0, 0, 0, 0);
       const diffDays = Math.ceil(
         (date.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
       );
@@ -197,13 +218,15 @@ export default function Index() {
                 style={styles.editInput}
                 multiline
               />
-              <TextInput
-                value={editDeadline}
-                onChangeText={setEditDeadline}
-                placeholder="Deadline (YYYY-MM-DD)"
-                placeholderTextColor={colors.textMuted}
-                style={styles.editInput}
-              />
+
+              {/* Date picker in edit mode */}
+              <View style={{ marginBottom: 12 }}>
+                <DatePickerModal
+                  value={editDeadline}
+                  onConfirm={(date) => setEditDeadline(date)}
+                  placeholder="Select deadline date"
+                />
+              </View>
 
               {/* Priority selector */}
               <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
@@ -281,11 +304,7 @@ export default function Index() {
 
                 {/* Deadline badge */}
                 {deadlineInfo && (
-                  <View style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 3,
-                  }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
                     <Ionicons name="calendar-outline" size={11} color={deadlineInfo.color} />
                     <Text style={{ color: deadlineInfo.color, fontSize: 11, fontWeight: "600" }}>
                       {deadlineInfo.label}

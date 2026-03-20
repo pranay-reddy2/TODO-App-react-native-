@@ -5,7 +5,8 @@ import { mutation, query } from "./_generated/server";
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
 /**
- * Fetch todos for a specific user, sorted by:
+ * Fetch todos for a specific user (by userId string = user._id),
+ * sorted by:
  * 1. Incomplete first, completed last
  * 2. Among incomplete: high priority → medium → low
  * 3. Within same priority: nearest deadline first (no deadline goes last)
@@ -16,31 +17,27 @@ export const getTodos = query({
   handler: async (ctx, args) => {
     let todos = await ctx.db.query("todos").order("desc").collect();
 
-    // Filter by userId if provided so each user only sees their own tasks
+    // Filter by userId if provided
     if (args.userId) {
       todos = todos.filter((t) => t.userId === args.userId);
     }
 
-    // Smart sort: incomplete first, then by priority + deadline mix
+    // Smart sort
     todos.sort((a, b) => {
-      // Completed tasks go to the bottom
       if (a.isCompleted !== b.isCompleted) {
         return a.isCompleted ? 1 : -1;
       }
 
-      // Among incomplete tasks: sort by priority
       const priorityDiff =
         (PRIORITY_ORDER[a.priority] ?? 1) - (PRIORITY_ORDER[b.priority] ?? 1);
       if (priorityDiff !== 0) return priorityDiff;
 
-      // Same priority: sort by deadline (nearest first, no deadline last)
       if (a.deadline && b.deadline) {
         return a.deadline.localeCompare(b.deadline);
       }
       if (a.deadline && !b.deadline) return -1;
       if (!a.deadline && b.deadline) return 1;
 
-      // Final tiebreaker: newer first (already ordered desc by _creationTime)
       return 0;
     });
 
@@ -58,9 +55,10 @@ export const addTodo = mutation({
     userId: v.string(),
   },
   handler: async (ctx, args) => {
-    // Validate priority value
     const validPriorities = ["low", "medium", "high"];
-    const priority = validPriorities.includes(args.priority) ? args.priority : "medium";
+    const priority = validPriorities.includes(args.priority)
+      ? args.priority
+      : "medium";
 
     return await ctx.db.insert("todos", {
       title: args.title.trim(),
@@ -92,6 +90,7 @@ export const deleteTodo = mutation({
     const todo = await ctx.db.get(args.id);
     if (!todo) throw new ConvexError("Todo not found");
     await ctx.db.delete(args.id);
+    return { success: true };
   },
 });
 
@@ -116,6 +115,9 @@ export const updateTodo = mutation({
   },
 });
 
+/**
+ * Clear all todos for a given userId — fixed to properly filter and delete.
+ */
 export const clearAllTodos = mutation({
   args: { userId: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -126,9 +128,9 @@ export const clearAllTodos = mutation({
       todos = todos.filter((t) => t.userId === args.userId);
     }
 
-    for (const todo of todos) {
-      await ctx.db.delete(todo._id);
-    }
+    // Delete each one
+    const deletePromises = todos.map((todo) => ctx.db.delete(todo._id));
+    await Promise.all(deletePromises);
 
     return { deletedCount: todos.length };
   },

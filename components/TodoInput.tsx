@@ -1,3 +1,9 @@
+/**
+ * components/TodoInput.tsx
+ *
+ * Form to add a new task. Uses DatePickerModal for deadline selection
+ * and pulls userId from AuthContext (Convex user ID).
+ */
 import { createHomeStyles } from "@/assets/styles/home.styles";
 import { api } from "@/convex/_generated/api";
 import useTheme from "@/hooks/useTheme";
@@ -11,10 +17,9 @@ import {
   TouchableOpacity,
   View,
   Text,
-  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-
+import DatePickerModal from "./DatePickerModel";
 type Priority = "low" | "medium" | "high";
 
 const PRIORITY_CONFIG = {
@@ -23,17 +28,18 @@ const PRIORITY_CONFIG = {
   high: { icon: "flame" as const, label: "High" },
 };
 
-// TodoInput — form to add a new task, pulls userId from AuthContext
 const TodoInput = () => {
   const { colors } = useTheme();
   const styles = createHomeStyles(colors);
   const { user } = useAuth();
+  // Support both old (email) and new (id) sessions
+  const userId = user?.id ?? user?.email ?? null;
 
   const addTodo = useMutation(api.todos.addTodo);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [deadline, setDeadline] = useState("");
+  const [deadline, setDeadline] = useState(""); // "YYYY-MM-DD" or ""
   const [priority, setPriority] = useState<Priority>("medium");
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -43,15 +49,19 @@ const TodoInput = () => {
       return;
     }
 
+    if (!userId) {
+      Alert.alert("Error", "You must be logged in to add tasks.");
+      return;
+    }
+
     try {
       await addTodo({
         title: title.trim(),
         description: description.trim(),
         dateTime: new Date().toISOString(),
-        deadline: deadline.trim(),
+        deadline: deadline,
         priority,
-        // Use authenticated user's email as userId; fallback to "guest"
-        userId: user?.email ?? "guest",
+        userId,
       });
 
       // Reset form
@@ -60,8 +70,9 @@ const TodoInput = () => {
       setDeadline("");
       setPriority("medium");
       setIsExpanded(false);
-    } catch {
-      Alert.alert("Error", "Failed to add task. Please try again.");
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Failed to add task";
+      Alert.alert("Error", msg);
     }
   };
 
@@ -107,12 +118,12 @@ const TodoInput = () => {
             multiline
           />
 
-          <TextInput
-            placeholder={`Deadline (YYYY-MM-DD)${Platform.OS === "ios" ? "" : " e.g. 2025-12-31"}`}
+          {/* Date picker — replaces plain text input */}
+          <DatePickerModal
             value={deadline}
-            onChangeText={setDeadline}
-            style={styles.input}
-            placeholderTextColor={colors.textMuted}
+            onConfirm={(date) => setDeadline(date)}
+            placeholder="Select deadline date"
+            minimumDate={new Date()}
           />
 
           {/* Priority selector */}

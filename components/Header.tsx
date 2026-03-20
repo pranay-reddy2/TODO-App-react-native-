@@ -1,3 +1,9 @@
+/**
+ * components/Header.tsx
+ *
+ * Shows greeting, progress bar, and task count.
+ * Uses user.id (Convex _id) to query todos.
+ */
 import { createHomeStyles } from "@/assets/styles/home.styles";
 import { api } from "@/convex/_generated/api";
 import useTheme from "@/hooks/useTheme";
@@ -7,14 +13,16 @@ import { useQuery } from "convex/react";
 import { LinearGradient } from "expo-linear-gradient";
 import { Text, View } from "react-native";
 
-// Header shows progress for the current authenticated user only
 const Header = () => {
   const { colors } = useTheme();
   const homeStyles = createHomeStyles(colors);
   const { user } = useAuth();
+  const userId = user?.id ?? user?.email ?? undefined;
 
-  // Filter todos by userId so progress reflects only this user's tasks
-  const todos = useQuery(api.todos.getTodos, { userId: user?.email ?? "guest" });
+  const todos = useQuery(
+    api.todos.getTodos,
+    userId ? { userId } : "skip"
+  );
 
   const completedCount = todos ? todos.filter((todo) => todo.isCompleted).length : 0;
   const totalCount = todos ? todos.length : 0;
@@ -35,7 +43,9 @@ const Header = () => {
         <View style={homeStyles.titleTextContainer}>
           <Text style={homeStyles.title}>{greeting} 👋</Text>
           <Text style={homeStyles.subtitle}>
-            {totalCount === 0
+            {!todos
+              ? "Loading..."
+              : totalCount === 0
               ? "No tasks yet — add one!"
               : completedCount === totalCount
               ? "All tasks done! 🎉"
